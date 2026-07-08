@@ -4,6 +4,8 @@ import { MentionFieldOption, MentionEditorColors } from './types';
 import { colorsToCssVars } from './colors';
 
 interface MentionMenuProps {
+  /** Element id; referenced by the editable's `aria-controls`. */
+  id: string;
   fields: MentionFieldOption[];
   selectedIndex: number;
   onSelect: (field: MentionFieldOption) => void;
@@ -19,7 +21,12 @@ const MENU_COLOR_KEYS: (keyof MentionEditorColors)[] = [
   'menuHighlightBg',
 ];
 
+/** Shared with `MentionEditor` so its `aria-activedescendant` points at the right row. */
+export const getMenuOptionId = (menuId: string, fieldId: string): string =>
+  `${menuId}-option-${fieldId}`;
+
 export const MentionMenu: React.FC<MentionMenuProps> = ({
+  id,
   fields,
   selectedIndex,
   onSelect,
@@ -27,7 +34,7 @@ export const MentionMenu: React.FC<MentionMenuProps> = ({
   targetRect,
   colors,
 }) => {
-  if (!targetRect || fields.length === 0) return null;
+  if (!targetRect) return null;
 
   // Rendered into document.body via a portal and positioned with `fixed` using
   // raw viewport coordinates from getBoundingClientRect(). This is what makes
@@ -42,6 +49,8 @@ export const MentionMenu: React.FC<MentionMenuProps> = ({
   // in the real DOM, so it wouldn't inherit color overrides set there.
   return createPortal(
     <div
+      id={id}
+      role="listbox"
       className="mention-editor__menu z-9999 w-70 max-h-75 overflow-y-auto rounded-md border py-1 shadow-lg border-(--mention-editor-menu-border-color,var(--color-gray-300)) dark:border-(--mention-editor-menu-border-color,var(--color-neutral-700)) bg-(--mention-editor-menu-bg,var(--color-white)) dark:bg-(--mention-editor-menu-bg,var(--color-neutral-800))"
       style={{
         position: 'fixed',
@@ -50,28 +59,37 @@ export const MentionMenu: React.FC<MentionMenuProps> = ({
         ...colorsToCssVars(colors, MENU_COLOR_KEYS),
       }}
     >
-      {fields.map((field, i) => (
-        <div
-          key={field.id}
-          className={
-            'mention-editor__menu-item cursor-pointer px-3 py-2' +
-            ' text-(--mention-editor-menu-text-color,var(--color-gray-900))' +
-            ' dark:text-(--mention-editor-menu-text-color,var(--color-gray-100))' +
-            (i === selectedIndex
-              ? ' bg-(--mention-editor-menu-highlight-bg,var(--color-indigo-50))' +
-                ' dark:bg-(--mention-editor-menu-highlight-bg,var(--color-neutral-700))'
-              : '')
-          }
-          onClick={(e) => {
-            e.preventDefault();
-            onSelect(field);
-          }}
-          onMouseDown={(e) => e.preventDefault()} // Prevent editor blur
-          onMouseEnter={() => onHover(i)}
-        >
-          {field.label}
+      {fields.length === 0 ? (
+        <div className="mention-editor__menu-item cursor-default px-3 py-2 text-(--mention-editor-menu-text-color,var(--color-gray-900)) dark:text-(--mention-editor-menu-text-color,var(--color-gray-100)) opacity-60">
+          No matches
         </div>
-      ))}
+      ) : (
+        fields.map((field, i) => (
+          <div
+            key={field.id}
+            id={getMenuOptionId(id, field.id)}
+            role="option"
+            aria-selected={i === selectedIndex}
+            className={
+              'mention-editor__menu-item cursor-pointer px-3 py-2' +
+              ' text-(--mention-editor-menu-text-color,var(--color-gray-900))' +
+              ' dark:text-(--mention-editor-menu-text-color,var(--color-gray-100))' +
+              (i === selectedIndex
+                ? ' bg-(--mention-editor-menu-highlight-bg,var(--color-indigo-50))' +
+                  ' dark:bg-(--mention-editor-menu-highlight-bg,var(--color-neutral-700))'
+                : '')
+            }
+            onClick={(e) => {
+              e.preventDefault();
+              onSelect(field);
+            }}
+            onMouseDown={(e) => e.preventDefault()} // Prevent editor blur
+            onMouseEnter={() => onHover(i)}
+          >
+            {field.label}
+          </div>
+        ))
+      )}
     </div>,
     document.body
   );

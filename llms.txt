@@ -39,27 +39,33 @@ function Example() {
 | `value` | `string` | yes | Wire-format content; component is fully controlled. |
 | `fields` | `{ id: string; label: string }[]` | yes | Candidates for the `@` menu; already filtered/localized by the caller — no built-in fetching. |
 | `onChange` | `(value: string) => void` | no | Fires on every edit with the new wire string. |
+| `onFocus` / `onBlur` | `(event: React.FocusEvent) => void` | no | Fires on the editable surface gaining/losing focus. |
+| `onKeyDown` | `(event: React.KeyboardEvent) => void` | no | Called after the suggestion menu's own key handling. |
 | `dir` | `'ltr' \| 'rtl'` | no | Sets the real `dir` attribute on the editable surface; needed for correct RTL caret/bidi behavior. |
 | `disabled` | `boolean` | no, default `false` | Read-only + dimmed. |
 | `isError` | `boolean` | no, default `false` | Red border only; doesn't block input. |
 | `placeholder` | `string` | no | Shows only when the doc is exactly one empty paragraph. |
 | `rows` | `number` | no | `min-height = rows * 1.5em`, textarea-rows-equivalent; grows taller if content wraps further. |
+| `maxLength` | `number` | no | Caps the *visible* length (mention = `"@" + label.length`, not its id); blocks growth past the limit but never blocks shrinking, even if content is already over. |
 | `className` | `string` | no | Appended to the root container's class list. |
 | `colors` | `MentionEditorColors` | no | Per-instance color overrides; see Theme colors below. Omitted keys keep the default. |
 
+`MentionEditor` forwards a `ref`: `{ focus(): void; blur(): void; getPlainTextLength(): number }` (type: `MentionEditorHandle`). No value getter on it -- the component is controlled, read `value`/`onChange` instead.
+
 ## Other exports
 
-`MentionEditorProps` (type), `MentionFieldOption` (type), `MentionEditorColors` (type), `INITIAL_VALUE` (empty-doc Slate value), `MENTION_OPEN` / `MENTION_CLOSE` (the `'<@'` / `'>'` delimiter constants), `serializeToDiscordMarkup` (deprecated alias of `serialize`).
+`MentionEditorProps` (type), `MentionFieldOption` (type), `MentionEditorColors` (type), `MentionEditorHandle` (type), `getPlainTextLength(nodes: Descendant[]): number` (function; the same count `maxLength`/the ref use), `INITIAL_VALUE` (empty-doc Slate value), `MENTION_OPEN` / `MENTION_CLOSE` (the `'<@'` / `'>'` delimiter constants), `serializeToDiscordMarkup` (deprecated alias of `serialize`).
 
 ## Behavior that is fixed, not configurable via props
 
 - Trigger is always `@`; only fires at line-start or after whitespace (never mid-word, e.g. `user@`).
-- Suggestion menu shows top 10 case-insensitive substring matches on `label`.
+- Suggestion menu shows top 10 case-insensitive substring matches on `label`; zero matches keeps the menu open with a "No matches" row rather than closing it.
 - Menu keys: `↑`/`↓` navigate, `Tab`/`Enter` select, `Escape` dismiss.
 - Undo/redo (`Ctrl/Cmd+Z`) works via `slate-history`.
 - A mention is atomic: one Backspace immediately after it deletes the whole node, never a partial one.
 - Mentions get `unicode-bidi: isolate` so an embedded Latin/digit label can't flip surrounding RTL paragraph reordering.
 - Built-in `dark:` styling follows OS `prefers-color-scheme`, not a manually toggled `.dark` class (e.g. `next-themes`) — override the `.mention-editor*` classes directly if you need class-driven dark mode.
+- The suggestion menu has ARIA listbox/option roles, and the editable carries `aria-haspopup`/`aria-expanded`/`aria-controls`/`aria-activedescendant`.
 
 ## Styling hook classes (all normal, single-class specificity — a later rule wins)
 

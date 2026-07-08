@@ -1,11 +1,19 @@
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createEditor, Descendant, Editor, Transforms, Range } from 'slate';
 import { Slate, Editable, ReactEditor, RenderPlaceholderProps, withReact } from 'slate-react';
 import { withHistory } from 'slate-history';
 import { MentionFieldOption, MentionEditorColors, INITIAL_VALUE } from './types';
-import { serialize, deserialize } from './serialize';
+import { serialize, deserialize, getPlainTextLength } from './serialize';
 import { colorsToCssVars } from './colors';
-import { MentionMenu } from './MentionMenu';
+import { MentionMenu, getMenuOptionId } from './MentionMenu';
 
 export interface MentionEditorProps {
   /** Wire-format string, e.g. `"Hello <@a1b2c3d4-...>, pay rent."` */
@@ -13,15 +21,32 @@ export interface MentionEditorProps {
   /** Already localized/filtered list of fields the consumer wants offered. */
   fields: MentionFieldOption[];
   onChange?: (value: string) => void;
+  onFocus?: (event: React.FocusEvent) => void;
+  onBlur?: (event: React.FocusEvent) => void;
+  /** Called after the suggestion menu's own key handling (arrows/Tab/Enter/Escape). */
+  onKeyDown?: (event: React.KeyboardEvent) => void;
   dir?: 'ltr' | 'rtl';
   disabled?: boolean;
   isError?: boolean;
   placeholder?: string;
   /** Approximate visible height, textarea-`rows`-equivalent. */
   rows?: number;
+  /**
+   * Caps the *visible* length (each mention counts as `"@" + label.length`,
+   * not its often-longer wire-format id) -- typing or pasting past this limit
+   * is blocked, but existing content already over it can still be edited/trimmed.
+   */
+  maxLength?: number;
   className?: string;
   /** Per-instance color overrides; omitted keys keep the built-in default. */
   colors?: MentionEditorColors;
+}
+
+export interface MentionEditorHandle {
+  focus: () => void;
+  blur: () => void;
+  /** The same visible-length count `maxLength` is enforced against. */
+  getPlainTextLength: () => number;
 }
 
 const EDITOR_COLOR_KEYS: (keyof MentionEditorColors)[] = [
@@ -34,47 +59,79 @@ const EDITOR_COLOR_KEYS: (keyof MentionEditorColors)[] = [
   'mentionBg',
 ];
 
-export function MentionEditor(props: MentionEditorProps): React.JSX.Element {
-  const {
-    value,
-    fields,
-    onChange,
-    dir,
-    disabled = false,
-    isError = false,
-    placeholder,
-    rows,
-    className,
-    colors,
-  } = props;
+export const MentionEditor = React.forwardRef<MentionEditorHandle, MentionEditorProps>(
+  function MentionEditor(props, ref) {
+    const {
+      value,
+      fields,
+      onChange,
+      onFocus,
+      onBlur,
+      onKeyDown,
+      dir,
+      disabled = false,
+      isError = false,
+      placeholder,
+      rows,
+      maxLength,
+      className,
+      colors,
+    } = props;
 
-  // `generation` forces a full remount of the Slate editor instance whenever the
-  // `value` prop changes for a reason *other* than our own onChange echoing back
-  // down (e.g. the consumer swaps to editing a different record). See the
-  // render-time reset block below for the echo-vs-external distinction.
-  const [generation, setGeneration] = useState(0);
-  const editor = useMemo(() => withMentions(withHistory(withReact(createEditor()))), [generation]);
+    // Read via a ref (not captured in the `withMaxLength` closure directly) so
+    // changing `maxLength` doesn't require recreating the editor instance.
+    const maxLengthRef = useRef(maxLength);
+    maxLengthRef.current = maxLength;
 
-  const lastEmittedRef = useRef(value);
-  const [committedValue, setCommittedValue] = useState(value);
-  const [slateValue, setSlateValue] = useState<Descendant[]>(() =>
-    value ? deserialize(value, fields) : INITIAL_VALUE
-  );
-  const [target, setTarget] = useState<Range | null>(null);
-  const [index, setIndex] = useState(0);
-  const [search, setSearch] = useState('');
+    // `generation` forces a full remount of the Slate editor instance whenever the
+    // `value` prop changes for a reason *other* than our own onChange echoing back
+    // down (e.g. the consumer swaps to editing a different record). See the
+    // render-time reset block below for the echo-vs-external distinction.
+    const [generation, setGeneration] = useState(0);
+    const editor = useMemo(
+      () =>
+        withMaxLength(
+          withMentions(withHistory(withReact(createEditor()))),
+          () => maxLengthRef.current
+        ),
+      [generation]
+    );
 
-  if (value !== committedValue) {
-    setCommittedValue(value);
-    if (value !== lastEmittedRef.current) {
-      setSlateValue(value ? deserialize(value, fields) : INITIAL_VALUE);
-      setGeneration((g) => g + 1);
-      setTarget(null);
-      setSearch('');
-      setIndex(0);
-      lastEmittedRef.current = value;
+    const lastEmittedRef = useRef(value);
+    const [committedValue, setCommittedValue] = useState(value);
+    const [slateValue, setSlateValue] = useState<Descendant[]>(() =>
+      value ? deserialize(value, fields) : INITIAL_VALUE
+    );
+    // Tracks the visible length of the current value, exposed via the ref's
+    // getPlainTextLength().
+    const plainLengthRef = useRef(getPlainTextLength(slateValue));
+    const [target, setTarget] = useState<Range | null>(null);
+    const [index, setIndex] = useState(0);
+    const [search, setSearch] = useState('');
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        focus: () => ReactEditor.focus(editor),
+        blur: () => ReactEditor.blur(editor),
+        getPlainTextLength: () => plainLengthRef.current,
+      }),
+      [editor]
+    );
+
+    if (value !== committedValue) {
+      setCommittedValue(value);
+      if (value !== lastEmittedRef.current) {
+        const nextSlateValue = value ? deserialize(value, fields) : INITIAL_VALUE;
+        setSlateValue(nextSlateValue);
+        plainLengthRef.current = getPlainTextLength(nextSlateValue);
+        setGeneration((g) => g + 1);
+        setTarget(null);
+        setSearch('');
+        setIndex(0);
+        lastEmittedRef.current = value;
+      }
     }
-  }
 
   // Filter fields based on the search query
   const filteredFields = useMemo(() => {
@@ -120,6 +177,7 @@ export function MentionEditor(props: MentionEditorProps): React.JSX.Element {
   // --- CORE LOGIC: Trigger Detection ---
   const handleChange = useCallback(
     (newValue: Descendant[]) => {
+      plainLengthRef.current = getPlainTextLength(newValue);
       setSlateValue(newValue);
 
       const serialized = serialize(newValue);
@@ -145,6 +203,15 @@ export function MentionEditor(props: MentionEditorProps): React.JSX.Element {
   const selectField = useCallback(
     (selectedField: MentionFieldOption) => {
       if (target) {
+        if (maxLength != null) {
+          // The target range is exactly "@" + the search text typed so far,
+          // so its plain length is always 1 + search.length -- compute what
+          // the total would be after swapping it for the mention, and skip
+          // the insert entirely rather than let it land over the limit.
+          const currentLength = getPlainTextLength(editor.children);
+          const projectedLength = currentLength - (1 + search.length) + (1 + selectedField.label.length);
+          if (projectedLength > maxLength) return;
+        }
         Transforms.select(editor, target);
         Transforms.delete(editor);
         Transforms.insertNodes(
@@ -161,7 +228,7 @@ export function MentionEditor(props: MentionEditorProps): React.JSX.Element {
         setTarget(null);
       }
     },
-    [editor, target]
+    [editor, target, maxLength, search]
   );
 
   // --- KEYBOARD NAVIGATION ---
@@ -183,8 +250,10 @@ export function MentionEditor(props: MentionEditorProps): React.JSX.Element {
           }
           case 'Tab':
           case 'Enter':
-            event.preventDefault();
-            selectField(filteredFields[index]);
+            if (filteredFields.length > 0) {
+              event.preventDefault();
+              selectField(filteredFields[index]);
+            }
             break;
           case 'Escape':
             event.preventDefault();
@@ -192,9 +261,12 @@ export function MentionEditor(props: MentionEditorProps): React.JSX.Element {
             break;
         }
       }
+      onKeyDown?.(event);
     },
-    [target, index, filteredFields, selectField]
+    [target, index, filteredFields, selectField, onKeyDown]
   );
+
+  const menuId = useId();
 
   const rootClassName = [
     'mention-editor relative rounded-md border',
@@ -222,12 +294,21 @@ export function MentionEditor(props: MentionEditorProps): React.JSX.Element {
           dir={dir}
           readOnly={disabled}
           onKeyDown={handleKeyDown}
+          onFocus={onFocus}
+          onBlur={onBlur}
           placeholder={placeholder}
           renderElement={(elementProps) => <Element {...elementProps} />}
           renderPlaceholder={renderPlaceholder}
+          aria-haspopup="listbox"
+          aria-expanded={!!target}
+          aria-controls={target ? menuId : undefined}
+          aria-activedescendant={
+            target && filteredFields[index] ? getMenuOptionId(menuId, filteredFields[index].id) : undefined
+          }
         />
         {target && (
           <MentionMenu
+            id={menuId}
             fields={filteredFields}
             selectedIndex={index}
             onSelect={selectField}
@@ -239,7 +320,8 @@ export function MentionEditor(props: MentionEditorProps): React.JSX.Element {
       </div>
     </Slate>
   );
-}
+  }
+);
 
 // slate-react's default placeholder renders at a fixed dim-black opacity,
 // which reads poorly in dark mode. Overriding it lets the placeholder use
@@ -337,6 +419,56 @@ const withMentions = (editor: Editor) => {
       }
     }
     deleteBackward(...args);
+  };
+
+  return editor;
+};
+
+/**
+ * Enforces `maxLength` by letting an insertion happen normally and then
+ * trimming any resulting overflow off the end via a real `Transforms.delete`.
+ *
+ * The seemingly more obvious approach -- checking first and skipping the
+ * insertion entirely when it wouldn't fit -- doesn't work in this Slate
+ * version: typed input is reconciled by diffing the DOM *after* the native
+ * browser edit has already happened, not by intercepting and
+ * `preventDefault`-ing it beforehand. So refusing to call the real
+ * `insertText` still leaves the just-typed character sitting in the actual
+ * DOM, with no Slate operation left to reconcile it away. Inserting for real
+ * and then deleting the excess is itself a genuine operation, which Slate
+ * *does* correctly reconcile the DOM against.
+ *
+ * Covers typing (`insertText`), paste/drop (`insertFragment`), and new
+ * paragraphs (`insertBreak`); mention insertion goes through
+ * `Transforms.insertNodes` directly and is pre-checked separately in
+ * `selectField` instead, since skipping a discrete, deliberate action
+ * (picking a menu item) outright is the better UX there.
+ */
+const withMaxLength = (editor: Editor, getMaxLength: () => number | undefined) => {
+  const { insertText, insertFragment, insertBreak } = editor;
+
+  const trimToMaxLength = () => {
+    const maxLength = getMaxLength();
+    if (maxLength == null) return;
+    const overBy = getPlainTextLength(editor.children) - maxLength;
+    if (overBy > 0) {
+      Transforms.delete(editor, { unit: 'character', reverse: true, distance: overBy });
+    }
+  };
+
+  editor.insertText = (text, options) => {
+    insertText(text, options);
+    trimToMaxLength();
+  };
+
+  editor.insertFragment = (fragment, options) => {
+    insertFragment(fragment, options);
+    trimToMaxLength();
+  };
+
+  editor.insertBreak = () => {
+    insertBreak();
+    trimToMaxLength();
   };
 
   return editor;

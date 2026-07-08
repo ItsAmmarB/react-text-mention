@@ -54,13 +54,18 @@ Hello <@a1b2c3d4-0000-0000-0000-000000000001>, welcome.
 | `value` | `string` | *(required)* | Wire-format content (controlled — the editor always reflects this string). |
 | `fields` | `{ id: string; label: string }[]` | *(required)* | Fields offered in the `@` suggestion menu; filter/localize before passing in — the component doesn't fetch or translate these itself. |
 | `onChange` | `(value: string) => void` | `undefined` | Called with the new wire-format string on every edit. Omit for a read-only display (combine with `disabled`). |
+| `onFocus` / `onBlur` | `(event: React.FocusEvent) => void` | `undefined` | Fired when the editable surface gains/loses focus — e.g. to trigger validation-on-blur in a form library. |
+| `onKeyDown` | `(event: React.KeyboardEvent) => void` | `undefined` | Called after the suggestion menu's own key handling (arrows/Tab/Enter/Escape) — e.g. to add a Cmd+Enter-to-submit shortcut. Check `event.defaultPrevented` if you need to know whether the menu already acted on the key. |
 | `dir` | `'ltr' \| 'rtl'` | `undefined` (browser infers) | Applied directly as the `dir` HTML attribute on the editable surface — required for correct caret movement and bidi layout with RTL content such as Arabic. |
 | `disabled` | `boolean` | `false` | Makes the editor read-only (`Editable`'s `readOnly`) and dims it via `opacity-60`. |
 | `isError` | `boolean` | `false` | Swaps the border to the invalid-state color (`border-red-500`). Purely visual — doesn't block typing. |
 | `placeholder` | `string` | `undefined` (no placeholder) | Shown only when the document is fully empty (a single empty paragraph) — see [Behavior notes](#behavior-notes). |
 | `rows` | `number` | `undefined` (intrinsic `min-h-11`, ~44px) | Sets `min-height` to `rows * 1.5em`, textarea-`rows`-equivalent. The editor still grows taller than this if content wraps to more lines. |
+| `maxLength` | `number` | `undefined` (no limit) | Caps the *visible* length — see [Length limits](#length-limits). |
 | `className` | `string` | `undefined` | Extra class name(s) appended to the root container, after the built-in ones — use this for layout (width, margin) or to override the built-in border/background. |
 | `colors` | `MentionEditorColors` | `undefined` (built-in defaults) | Per-instance color overrides — see [Theme colors](#theme-colors). Omitted keys keep their default. |
+
+`MentionEditor` also forwards a `ref` — see [Imperative handle](#imperative-handle).
 
 ## Exported utilities
 
@@ -72,6 +77,8 @@ Everything importable from `@itsammarb/mention-editor`:
 | `MentionEditorProps` | type | Prop types for `MentionEditor`. |
 | `MentionFieldOption` | type | Shape of an entry in `fields`: `{ id: string; label: string }`. |
 | `MentionEditorColors` | type | Shape of the `colors` prop — see [Theme colors](#theme-colors). |
+| `MentionEditorHandle` | type | Shape of the imperative handle exposed via `ref` — see [Imperative handle](#imperative-handle). |
+| `getPlainTextLength(nodes: Descendant[]): number` | function | The same visible-length count `maxLength` enforces and the ref's `getPlainTextLength()` returns — each mention counts as `"@" + label.length`, not its wire-format id. |
 | `serialize(nodes: Descendant[]): string` | function | Converts a Slate `Descendant[]` tree to the wire-format string. Useful if you need to inspect/generate content outside the component (e.g. server-side). |
 | `deserialize(value: string, fields?: MentionFieldOption[]): Descendant[]` | function | Inverse of `serialize`. `fields` resolves each mention's label; an id not found in `fields` still renders, falling back to the raw id as its label. |
 | `serializeToDiscordMarkup` | function | Deprecated alias of `serialize`, kept for backwards compatibility with the pre-rename API. Prefer `serialize`. |
@@ -136,6 +143,37 @@ A `colors` value applies in both light and dark mode (the fallback is what diffe
 **Advanced — global CSS override**: under the hood, `colors` works by setting CSS custom properties (`--mention-editor-*`) inline. You can also set these directly in your own global CSS (`:root { --mention-editor-mention-color: ...; }`) as a page-wide fallback for instances that don't pass `colors` at all — an inline `colors` value always takes precedence over a global CSS one. Global CSS declarations must be scoped to `:root`/`html`/`body` (not `.mention-editor`) for the same portal reason as above.
 
 If your own app happens to use Tailwind and you want to reuse its utility classes against this component's internal DOM (beyond what `className` on the root reaches), you can optionally point your app's Tailwind config/`@source` at `node_modules/@itsammarb/mention-editor/dist` — but this is purely an opt-in extra, not required for the component to work or look right.
+
+## Imperative handle
+
+`MentionEditor` forwards a `ref` exposing:
+
+```tsx
+import { useRef } from 'react';
+import { MentionEditor, MentionEditorHandle } from '@itsammarb/mention-editor';
+
+const editorRef = useRef<MentionEditorHandle>(null);
+
+<MentionEditor ref={editorRef} value={value} fields={fields} onChange={setValue} />;
+
+editorRef.current?.focus();
+editorRef.current?.blur();
+editorRef.current?.getPlainTextLength(); // same count maxLength enforces against
+```
+
+There's no `value` getter on the handle since the component is fully controlled — read the current content from the `value` you already pass in (or `onChange`'s latest callback argument), not from the ref.
+
+## Length limits
+
+`maxLength` caps the *visible* length: each mention counts as `"@" + label.length`, not its (often much longer, GUID-based) wire-format id — so a 4-character mention label costs 5 toward the limit regardless of how long the underlying field id is. Typing or pasting past the limit is blocked (a paste that doesn't fully fit is truncated to what's left, not rejected outright); picking a mention from the suggestion menu that would push the total over the limit is skipped entirely rather than partially inserted.
+
+Content that's already over `maxLength` — e.g. because it was set that way via the controlled `value` prop, before a `maxLength` was added — is left alone and can still be edited or trimmed back down; only *growing* past the limit is blocked, so you're never left unable to delete your way back under it.
+
+`getPlainTextLength()` (exported standalone, and available on the [imperative handle](#imperative-handle)) returns the same count, e.g. for rendering a "120/280" counter next to the editor.
+
+## Accessibility
+
+The suggestion menu follows the ARIA listbox pattern: the menu has `role="listbox"`, each row has `role="option"` and `aria-selected`, and the editable surface carries `aria-haspopup="listbox"` plus (only while the menu is open) `aria-expanded`, `aria-controls`, and `aria-activedescendant` pointing at the keyboard-highlighted row. A search with zero matches keeps the menu open showing a "No matches" row instead of silently vanishing, so a screen reader user isn't left wondering whether the `@` did anything.
 
 ## Behavior notes
 

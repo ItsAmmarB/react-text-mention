@@ -41,6 +41,34 @@ const serializeInline = (node: CustomText | MentionElement): string => {
 export const serializeToDiscordMarkup = serialize;
 
 /**
+ * Counts the *visible* length of the content -- each mention counts as
+ * `"@" + label.length`, not the length of its (often much longer, id-based)
+ * wire-format token. This is what `maxLength` enforces against, and what
+ * `MentionEditor`'s ref exposes via `getPlainTextLength()`: it matches what a
+ * user actually sees on screen, rather than penalizing them for a field with
+ * a long internal id.
+ */
+export const getPlainTextLength = (nodes: Descendant[]): number => {
+  return nodes.reduce((total: number, node, i) => {
+    const paragraphBreak = i > 0 ? 1 : 0; // mirrors the '\n' serialize() joins paragraphs with
+    return total + paragraphBreak + paragraphPlainTextLength(node);
+  }, 0);
+};
+
+const paragraphPlainTextLength = (node: Descendant): number => {
+  if (Text.isText(node) || !('children' in node)) return 0;
+  return (node.children as (CustomText | MentionElement)[]).reduce(
+    (total: number, child) => total + inlinePlainTextLength(child),
+    0
+  );
+};
+
+const inlinePlainTextLength = (node: CustomText | MentionElement): number => {
+  if (isMentionElement(node)) return 1 + node.field.label.length; // "@" + label
+  return node.text.length;
+};
+
+/**
  * Parses a wire format string back into a Slate `Descendant[]` value, resolving
  * each `<@id>` token against `fields` to recover its display label. Tokens whose
  * id isn't found in `fields` still render (falling back to the raw id as the
