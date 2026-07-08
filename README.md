@@ -1,5 +1,17 @@
 # @itsammarb/mention-editor
 
+<p align="center">
+  <a href="https://www.npmjs.com/package/@itsammarb/mention-editor">
+    <img src="https://img.shields.io/npm/v/@itsammarb/mention-editor.svg" alt="NPM Version" />
+  </a>
+  <a href="https://www.npmjs.com/package/@itsammarb/mention-editor">
+    <img src="https://img.shields.io/npm/dm/@itsammarb/mention-editor.svg" alt="NPM Downloads" />
+  </a>
+  <a href="https://github.com/ItsAmmarB/mention-editor/actions">
+    <img src="https://github.com/ItsAmmarB/mention-editor/actions/workflows/public.yml/badge.svg" alt="Build Status" />
+  </a>
+</p>
+
 A Discord-style `@mention` rich-text editor built on [Slate.js](https://www.slatejs.org/). Mentions are atomic (void + inline) nodes: backspacing next to one deletes it whole, and the suggestion menu tracks the real caret position via `ReactEditor.toDOMRange`.
 
 ## Install
